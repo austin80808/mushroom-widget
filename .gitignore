@@ -1,0 +1,6 @@
+.godot/
+build/
+ears/MushroomEars.app/
+*.bak
+.DS_Store
+override.cfg
