@@ -7,7 +7,8 @@ extends Node
 ## --species=N picks the species, --bg=<hex> swaps transparency for a solid backdrop,
 ## --track=<file> --seconds=N [--grow-to=X] is for rendering clips (tools/render_loop.sh),
 ## --input=<device name> listens to
-## a microphone instead of system audio, --meter prints the audio levels each second.
+## a microphone instead of system audio, --meter prints the audio levels each second,
+## --m5=<ip>[:port] sends the cake's state over UDP for a companion display (experimental).
 
 const SAVE_PATH := "user://mushroom.cfg"
 const IDLE_RATE := 0.035  # % per second with no music: roughly an hour per cake
@@ -16,6 +17,9 @@ const HUMIDITY_DECAY := 0.004  # per second
 const MIST_AMOUNT := 0.25
 const LEVELS_PORT := 47808  # the Mushroom Ears helper sends audio levels here
 const PING_PORT := 47809  # and stays alive while we ping it here
+const M5_PORT := 47810  # default port of the M5Stack companion display
+const M5_HZ := 20.0  # state packets per second
+const STAGES := ["Colonization", "Pinning", "Fruiting", "Decay"]
 const TURN_SPEED := 0.035  # radians per second: one full turn every 3 minutes
 
 # Cake: a birthed half-pint jar cake, wide end down. Units are arbitrary "metres".
@@ -75,6 +79,37 @@ const MUSHROOMS := [
 	{"az": -150.0, "h": 0.6, "s": 0.7, "delay": 9.0, "tilt": 0.8, "thin": 0.35, "tall": 1.5, "cap": 0.5},
 ]
 
+const SPORE_PURPLE := Color("6a2c91")
+const PRINT_R := 1.9
+const PRINT_SHADER := """
+shader_type spatial;
+render_mode unshaded, cull_disabled, shadows_disabled;
+uniform vec3 base : source_color;
+uniform float phase = 0.0;
+uniform float pulse = 0.0;
+uniform float bass = 0.0;
+uniform float mid = 0.0;
+uniform float amount = 1.0;
+varying vec2 p;
+void vertex() {
+	p = VERTEX.xz;
+}
+void fragment() {
+	float r = length(p) / 1.9;
+	float a = atan(p.y, p.x) + phase * 0.05;
+	// Gill lines: fine radial spokes that bend with the mids, like a real print.
+	float bend = sin(r * 9.0 - phase) * (0.5 + 2.0 * mid);
+	float spokes = pow(0.5 + 0.5 * cos(a * 58.0 + bend), 1.6);
+	float fine = 0.5 + 0.5 * cos(a * 131.0 - bend * 0.7 + r * 5.0);
+	float gills = mix(spokes, spokes * fine, 0.45);
+	// Bands of spores travel outward; the kick pushes the print further out.
+	float bands = 0.55 + 0.45 * sin(r * 16.0 - phase * 2.0);
+	float reach = 0.74 + 0.26 * max(pulse, bass);
+	float fade = smoothstep(reach, reach * 0.62, r) * smoothstep(0.47, 0.56, r);
+	ALBEDO = mix(base, base * 2.2 + vec3(0.12, 0.0, 0.2), pulse * 0.7);
+	ALPHA = clamp(gills * bands * fade * amount * (1.0 + 0.4 * pulse), 0.0, 1.0);
+}
+"""
 const CAKE_SHADER := """
 shader_type spatial;
 uniform sampler2D noise;
@@ -142,6 +177,10 @@ var _grow_from := 0.0
 var _db_floor := -65.0
 var _db_range := 50.0
 var _cap_meshes: Array[ArrayMesh] = []
+var _m5: PacketPeerUDP  # --m5=<ip>[:port]: null unless the flag is given
+var _m5_wait := 0.0
+var _m5_beat := false  # a beat fired since the last packet
+var _m5_beats := 0  # running beat count, so the device survives a lost packet
 
 var _rig: Node3D
 var _cake_mat: ShaderMaterial
@@ -149,7 +188,8 @@ var _cap_mat: StandardMaterial3D
 var _stem_mat: StandardMaterial3D
 var _gill_mat: StandardMaterial3D
 var _shrooms: Array[Dictionary] = []
-var _rings: Array[Dictionary] = []
+var _print_mat: ShaderMaterial
+var _print_phase := 0.0
 var _mist: CPUParticles3D
 var _spores: CPUParticles3D
 
@@ -183,6 +223,8 @@ func _ready():
 			_preview = true
 		elif arg.begins_with("--grow-to="):
 			_grow_to = float(arg.get_slice("=", 1))
+		elif arg.begins_with("--m5="):
+			_setup_m5(arg.get_slice("=", 1))
 		elif arg.begins_with("--size="):
 			# Square render size in pixels, for clips and big screenshots.
 			var side := int(arg.get_slice("=", 1))
@@ -202,7 +244,12 @@ func _ready():
 		# Default: hear the Mac's own audio through the Mushroom Ears helper app.
 		_udp.bind(LEVELS_PORT, "127.0.0.1")
 		_udp.set_dest_address("127.0.0.1", PING_PORT)
-		OS.create_process("open", ["-g", ProjectSettings.globalize_path("res://ears/MushroomEars.app")])
+		# Prefer the copy installed in ~/Applications: macOS gives a helper nested inside
+		# another app bundle silence instead of system audio.
+		var ears := OS.get_environment("HOME").path_join("Applications/MushroomEars.app")
+		if not DirAccess.dir_exists_absolute(ears):
+			ears = ProjectSettings.globalize_path("res://ears/MushroomEars.app")
+		OS.create_process("open", ["-g", ears])
 
 	_build_world()
 	_apply_species()
@@ -326,19 +373,13 @@ func _build_world():
 			"thin": m.get("thin", 1.0), "tall": m.get("tall", 1.0), "capk": m.get("cap", 1.0),
 		})
 
-	# Beat rings on the table, mist and spores.
-	for i in 3:
-		var torus := TorusMesh.new()
-		torus.inner_radius = 0.97
-		torus.outer_radius = 1.0
-		var mat := StandardMaterial3D.new()
-		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		var node := _add_mesh(self, torus, mat)
-		node.position.y = -0.06
-		node.scale.y = 0.3
-		node.visible = false
-		_rings.append({"node": node, "mat": mat, "t": 1.0})
+	# Spore print on the table around the lid: purple gill lines that ripple outward.
+	var print_shader := Shader.new()
+	print_shader.code = PRINT_SHADER
+	_print_mat = ShaderMaterial.new()
+	_print_mat.shader = print_shader
+	_print_mat.set_shader_parameter("base", SPORE_PURPLE)
+	_add_mesh(self, _lathe([[Vector2(0.0, -0.1), Color.WHITE], [Vector2(PRINT_R, -0.1), Color.WHITE]]), _print_mat)
 	_mist = _particles(Color(0.62, 0.82, 1.0), Vector3(0, 2.9, 0), Vector3(1.2, 0.1, 1.2), Vector3.DOWN, 2.2, Vector3(0, -3, 0))
 	_spores = _particles(Color(0.95, 0.78, 0.4), Vector3(0, 1.7, 0), Vector3(1.2, 0.5, 1.2), Vector3.UP, 1.2, Vector3(0, 0.4, 0))
 
@@ -494,11 +535,12 @@ func _pose():
 	var open_main: float = smoothstep(0.35, 1.0, smoothstep(0.0, 1.0, clampf((_shown - 28.0) / 58.0, 0.0, 1.0)))
 	_gill_mat.albedo_color = VEIL.lerp(sp.gill, smoothstep(0.3, 0.8, open_main)).lerp(ROT.darkened(0.4), decay * 0.85)
 
-	var ring_color: Color = STAGE_COLORS[_stage()]
-	for ring in _rings:
-		ring.node.visible = ring.t < 1.0
-		ring.node.scale = Vector3(1.0 + 0.8 * ring.t, 0.3, 1.0 + 0.8 * ring.t)
-		ring.mat.albedo_color = Color(ring_color, (1.0 - ring.t) * 0.6)
+	_print_mat.set_shader_parameter("phase", _print_phase)
+	_print_mat.set_shader_parameter("pulse", _pulse)
+	_print_mat.set_shader_parameter("bass", _bass)
+	_print_mat.set_shader_parameter("mid", _mid)
+	# The print only drops once there are open caps to drop it.
+	_print_mat.set_shader_parameter("amount", open_main * (1.0 - 0.6 * decay))
 
 
 # ---------------------------------------------------------------- audio
@@ -591,18 +633,43 @@ func _listen(delta: float):
 	if b > _bass_avg + 0.12 and b > 0.25 and _beat_cooldown <= 0.0:
 		_pulse = 1.0
 		_beat_cooldown = 0.22
-		var oldest: Dictionary = _rings[0]
-		for ring in _rings:
-			if ring.t > oldest.t:
-				oldest = ring
-		oldest.t = 0.0
+		_m5_beat = true
+		_m5_beats = (_m5_beats + 1) & 0xFF
 		if _stage() == "Fruiting":
 			_spores.restart()
 			_spores.emitting = true
-	for ring in _rings:
-		ring.t = minf(ring.t + delta / 0.6, 1.0)
+	# The print drifts slowly on its own and surges outward with the kick.
+	_print_phase += delta * (0.35 + 5.0 * maxf(_pulse, _bass * 0.5))
 	if _demo_beat:
 		_pulse = 1.0
+
+
+# ---------------------------------------------------------------- M5Stack companion
+
+## --m5=<ip>[:port]: sends the cake's state to a companion display (experimental).
+func _setup_m5(target: String):
+	var host := target.get_slice(":", 0)
+	var port := int(target.get_slice(":", 1)) if target.contains(":") else M5_PORT
+	_m5 = PacketPeerUDP.new()
+	_m5.set_broadcast_enabled(true)  # lets <ip> be a broadcast address such as 192.168.1.255
+	if host == "" or port <= 0 or _m5.set_dest_address(host, port) != OK:
+		push_error("--m5 wants <ip>[:port], got: " + target)
+		_m5 = null
+
+
+## One 12-byte packet, M5_HZ times a second :
+## "MW", version 1, flags (bit 0: a beat since the last packet), progress x100 (u16 LE),
+## stage 0-3, species, bass, mid, high (each 0-255), beat count (wraps at 256).
+func _send_m5(delta: float):
+	_m5_wait -= delta
+	if _m5_wait > 0.0:
+		return
+	_m5_wait = maxf(_m5_wait + 1.0 / M5_HZ, 0.0)  # keep the remainder, so the rate holds
+	var p := PackedByteArray([0x4D, 0x57, 1, 1 if _m5_beat else 0, 0, 0, STAGES.find(_stage()), species,
+		roundi(_bass * 255.0), roundi(_mid * 255.0), roundi(_high * 255.0), _m5_beats])
+	p.encode_u16(4, roundi(clampf(progress, 0.0, 100.0) * 100.0))
+	_m5.put_packet(p)
+	_m5_beat = false
 
 
 # ---------------------------------------------------------------- growth and UI
@@ -675,6 +742,8 @@ func _process(delta):
 			progress = lerpf(_grow_from, _grow_to, clampf(_time / _seconds, 0.0, 1.0))
 		if _time >= _seconds:
 			get_tree().quit()
+	if _m5 != null:
+		_send_m5(delta)
 	_pose()
 	if _dragging:
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):

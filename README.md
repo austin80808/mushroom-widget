@@ -1,10 +1,12 @@
 # Mushroom Widget
 
-A 3D PF Tek cake that sits on your Mac desktop, grows psilocybin mushrooms while music plays, and bounces to the beat.
+A desktop toy for Mac: a 3D PF Tek cake that floats on your desktop, grows mushrooms while your music plays, and bounces to the beat. For anyone who wants a small music visualizer that is alive instead of a bar graph.
+
+| A full cake in ten seconds | Reacting to a beat |
+|---|---|
+| ![The cake colonizing, pinning, fruiting and decaying while turning](docs/media/grow-cycle.gif) | ![The cake pulsing, caps flashing and the spore print surging on each kick](docs/media/beat-loop.gif) |
 
 ![Six views: cubensis fruiting, the beat glow, a colonizing cake, azurescens, semilanceata, Panaeolus cyanescens](docs/media/overview.png)
-
-![The cake growing and pulsing to a test beat](docs/media/beat-loop.gif)
 
 Built with Godot 4.7 (one script, [main.gd](main.gd)) and a small Swift helper that listens to system audio.
 
@@ -14,7 +16,7 @@ Built with Godot 4.7 (one script, [main.gd](main.gd)) and a small Swift helper t
 |---|---|
 | **Grows on music** | The cake creeps along on its own (about an hour per cake) and grows about three times faster while audio is playing. Louder music and a misted cake grow faster still. |
 | **Four stages** | Colonization (mycelium takes over the brown cake in patches), Pinning, Fruiting, Decay. |
-| **Reacts to the beat** | The cake squashes and the mushrooms swell on the kick, wobble with the mids, the caps flash, a ring ripples out, and fruiting cakes throw spores. |
+| **Reacts to the beat** | The cake squashes and the mushrooms swell on the kick, wobble with the mids, the caps flash, a purple spore print on the table surges outward, and fruiting cakes throw spores. |
 | **Ten species** | Each new cake is the next species (list below). |
 | **Just the cake** | Transparent, borderless, always on top, slowly turning. No text. |
 
@@ -24,13 +26,25 @@ Built with Godot 4.7 (one script, [main.gd](main.gd)) and a small Swift helper t
 - **Mist** raises humidity (faster growth). **Harvest** works while fruiting; once the cake decays it becomes **New cake**.
 - **Drag** anywhere to move it. **Esc** or **×** quits. Progress is saved.
 
+## Requirements
+
+- macOS 14.2 or later (the audio helper uses Core Audio process taps). Built and tested on macOS 27, Apple silicon.
+- [Godot 4.7](https://godotengine.org/download/macos/), as `/Applications/Godot.app` or `godot` on your PATH (`brew install --cask godot`).
+- Xcode Command Line Tools, for `swiftc` (`xcode-select --install`).
+- `ffmpeg`, only for rendering video loops.
+
 ## Run it
 
 ```sh
+git clone https://github.com/austin80808/mushroom-widget.git
+cd mushroom-widget
+sh ears/build.sh
 godot --path .
 ```
 
-Or build the app and install it to `~/Applications`:
+`ears/build.sh` compiles the audio helper once. Without it the cake still grows, it just can't hear anything.
+
+To install it as an app in `~/Applications` instead:
 
 ```sh
 tools/make_app.sh
@@ -43,6 +57,8 @@ The app carries a copy of this project and runs it with the Godot installed on t
 `ears/` is **Mushroom Ears**, a tiny background app that taps the Mac's audio output (a Core Audio process tap, macOS 14.2 or later) and sends three loudness numbers (bass, mid, high) to the widget over local UDP. It records nothing, starts with the widget, and quits a few seconds after the widget closes. It works with any output device, including AirPods, with no audio rerouting.
 
 The first time, macOS asks to let Mushroom Ears record system audio. Allow it.
+
+`tools/make_app.sh` installs the helper beside the app, as `~/Applications/MushroomEars.app`, and the widget prefers that copy. macOS gives a helper that sits inside another app's bundle silence instead of audio.
 
 **If the cake stops reacting after a rebuild:** rebuilding the helper changes its signature and macOS silently stops feeding it audio. Clear the stale permission, then start the widget and allow the prompt again:
 
@@ -111,8 +127,27 @@ Pass these after `--`:
 | `--meter` | Print the audio levels once a second |
 | `--input=<device>` | Listen to a microphone instead of system audio |
 | `--track=<file> --seconds=N [--grow-to=X]` | Clip rendering, used by `tools/render_loop.sh` |
+| `--m5=<ip>[:port]` | Experimental: send growth, species and beat levels over UDP (12-byte packets, 20 a second, default port 47810) for a companion display such as an M5Stack. No firmware is included yet. |
+
+## Update and remove
+
+Update: `git pull`, then re-run `tools/make_app.sh` if you installed the app.
+
+Remove:
+
+```sh
+rm -rf ~/Applications/"Mushroom Widget.app" ~/Applications/MushroomEars.app
+rm -rf ~/Library/"Application Support"/Godot/app_userdata/"Mushroom Widget"
+rm -f ~/Library/Logs/MushroomEars.log
+tccutil reset AudioCapture local.mushroom-widget.ears
+```
 
 ## Notes
+
+- This is art. It contains no cultivation instructions, and the "species" are colour and shape presets.
+- Mac only. The widget itself is plain Godot, but the audio helper is Core Audio.
+- Problems and ideas: open an issue. Small pull requests are welcome; a new species is one line in `SPECIES`.
+- MIT licensed, see [LICENSE](LICENSE).
 
 - Godot 4.7 cannot read the BlackHole loopback device on this setup (`AudioUnitRender` error -10863 on every frame), which is why system audio goes through the helper.
 - The save file is `mushroom.cfg` in Godot's user data folder for "Mushroom Widget".
