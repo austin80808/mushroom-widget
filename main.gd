@@ -10,6 +10,7 @@ extends Node
 ## a microphone instead of system audio, --meter prints the audio levels each second.
 
 const SAVE_PATH := "user://mushroom.cfg"
+const IDLE_RATE := 0.035  # % per second with no music: roughly an hour per cake
 const MUSIC_RATE := 0.085  # % per second of music: roughly 20-30 minutes of music per cake
 const HUMIDITY_DECAY := 0.004  # per second
 const MIST_AMOUNT := 0.25
@@ -615,11 +616,16 @@ func _stage() -> String:
 
 func _on_growth_timer_timeout():
 	humidity = maxf(humidity - HUMIDITY_DECAY, 0.0)
-	# The cake only grows while music is playing; louder music and a misted cake grow faster.
+	# The cake always creeps along (about an hour per cake in silence), so it can never
+	# get stuck if no audio is reaching it. Music grows it about three times faster;
+	# louder music and a misted cake faster still.
 	var energy := (_bass + _mid + _high) / 3.0
-	if _seconds <= 0.0 and energy > 0.04:
-		minutes += 1.0 / 60.0
-		progress = minf(progress + MUSIC_RATE * (0.6 + 0.8 * humidity) * (0.6 + 0.8 * energy), 100.0)
+	if _seconds <= 0.0:
+		var rate := IDLE_RATE
+		if energy > 0.04:
+			minutes += 1.0 / 60.0
+			rate = MUSIC_RATE * (0.6 + 0.8 * energy)
+		progress = minf(progress + rate * (0.6 + 0.8 * humidity), 100.0)
 	_ticks += 1
 	if _udp.is_bound():
 		_udp.put_packet("hi".to_ascii_buffer())

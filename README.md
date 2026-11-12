@@ -12,7 +12,7 @@ Built with Godot 4.7 (one script, [main.gd](main.gd)) and a small Swift helper t
 
 | | |
 |---|---|
-| **Grows on music** | The cake only grows while audio is playing: roughly 20 to 30 minutes of music per cake. Louder music and a misted cake grow faster. |
+| **Grows on music** | The cake creeps along on its own (about an hour per cake) and grows about three times faster while audio is playing. Louder music and a misted cake grow faster still. |
 | **Four stages** | Colonization (mycelium takes over the brown cake in patches), Pinning, Fruiting, Decay. |
 | **Reacts to the beat** | The cake squashes and the mushrooms swell on the kick, wobble with the mids, the caps flash, a ring ripples out, and fruiting cakes throw spores. |
 | **Ten species** | Each new cake is the next species (list below). |
