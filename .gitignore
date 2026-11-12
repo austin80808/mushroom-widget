@@ -4,3 +4,4 @@ ears/MushroomEars.app/
 *.bak
 .DS_Store
 override.cfg
+launch-copy.md
