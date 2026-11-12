@@ -20,6 +20,8 @@ const PING_PORT := 47809  # and stays alive while we ping it here
 const M5_PORT := 47810  # default port of the M5Stack companion display
 const M5_HZ := 20.0  # state packets per second
 const STAGES := ["Colonization", "Pinning", "Fruiting", "Decay"]
+const AUTO_GAIN_DB := 30.0  # levels span the top 30 dB below the recent peak
+const PEAK_FLOOR_DB := -60.0
 const TURN_SPEED := 0.035  # radians per second: one full turn every 3 minutes
 
 # Cake: a birthed half-pint jar cake, wide end down. Units are arbitrary "metres".
@@ -156,6 +158,7 @@ var _spectrum: AudioEffectSpectrumAnalyzerInstance
 var _udp := PacketPeerUDP.new()
 var _raw := Vector3.ZERO
 var _raw_age := 99.0
+var _peak_db := PEAK_FLOOR_DB  # auto-gain reference for system audio
 var _use_mic := false
 var _bass := 0.0
 var _mid := 0.0
@@ -596,12 +599,16 @@ func _band(from_hz: float, to_hz: float) -> float:
 	return clampf((linear_to_db(maxf(mag, 0.000001)) - _db_floor) / _db_range, 0.0, 1.0)
 
 
-## Helper RMS to 0..1 (-50 dB maps to 0, -10 dB to 1).
+## Helper RMS to 0..1, measured against the loudest thing heard lately (_peak_db), so
+## the cake dances the same whether the Mac's volume is at 5% or 100%.
 func _level(rms: float) -> float:
-	return clampf((linear_to_db(maxf(rms, 0.000001)) + 50.0) / 40.0, 0.0, 1.0)
+	return clampf((linear_to_db(maxf(rms, 0.000001)) - (_peak_db - AUTO_GAIN_DB)) / AUTO_GAIN_DB, 0.0, 1.0)
 
 
 func _listen(delta: float):
+	# The reference level sinks slowly, so it follows a volume change within a minute
+	# or so, but never below the floor (silence is not amplified into noise).
+	_peak_db = maxf(_peak_db - 0.5 * delta, PEAK_FLOOR_DB)
 	var now := Vector3.ZERO
 	if _spectrum != null:
 		now = Vector3(_band(30, 150), _band(150, 2000), _band(2000, 10000))
@@ -614,6 +621,8 @@ func _listen(delta: float):
 				# Feed hook: anything can send "grow 5" to add 5% (see README).
 				progress = clampf(progress + float(parts[1]), 0.0, 100.0)
 			elif parts.size() == 3:
+				var loudest := maxf(float(parts[0]), maxf(float(parts[1]), float(parts[2])))
+				_peak_db = maxf(_peak_db, linear_to_db(maxf(loudest, 0.000001)))
 				var v := Vector3(_level(float(parts[0])), _level(float(parts[1])), _level(float(parts[2])))
 				_raw = v if not got else Vector3(maxf(_raw.x, v.x), maxf(_raw.y, v.y), maxf(_raw.z, v.z))
 				got = true
