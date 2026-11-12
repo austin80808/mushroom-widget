@@ -10,7 +10,7 @@ sh ears/build.sh
 rm -rf "$app" && mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/project"
 touch build/.gdignore
 rsync -a --exclude build --exclude docs --exclude tools --exclude .git --exclude '*.bak' \
-  --exclude override.cfg ./ "$app/Contents/Resources/project/"
+  --exclude override.cfg --exclude MushroomEars.app ./ "$app/Contents/Resources/project/"
 
 cat > "$app/Contents/MacOS/launcher" <<'LAUNCH'
 #!/bin/sh
@@ -48,6 +48,10 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 PLIST
 
 mkdir -p "$HOME/Applications"
+# The audio helper is installed beside the app, not inside it: macOS feeds a helper
+# nested in another app bundle silence instead of system audio.
+rm -rf "$HOME/Applications/MushroomEars.app"
+cp -R ears/MushroomEars.app "$HOME/Applications/"
 rm -rf "$HOME/Applications/Mushroom Widget.app"
 cp -R "$app" "$HOME/Applications/"
 echo "installed $HOME/Applications/Mushroom Widget.app"
