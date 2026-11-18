@@ -52,13 +52,21 @@ tools/make_app.sh
 
 The app carries a copy of this project and runs it with the Godot installed on the Mac (`/Applications/Godot.app`), so it needs Godot 4.7 but no export templates. Re-run the script after changing the project.
 
+A buyer build does not need Godot. On a Mac that has Godot only so it can build:
+
+```sh
+sh tools/make_disk.sh
+```
+
+That writes `build/MushroomWidget.dmg`. Inside it, Mushroom Widget.app has its own runtime, and MushroomEars.app sits next to it. Keep the two apps in the same folder. `tools/check_bundle.sh` fails if the cake app still starts a Godot on the machine. `tools/notarize.sh` Developer ID signs and notarizes both apps when that identity is in the keychain.
+
 ## System audio
 
 `ears/` is **Mushroom Ears**, a tiny background app that taps the Mac's audio output (a Core Audio process tap, macOS 14.2 or later) and sends three loudness numbers (bass, mid, high) to the widget over local UDP. It records nothing, starts with the widget, and quits a few seconds after the widget closes. It works with any output device, including AirPods, with no audio rerouting.
 
 The first time, macOS asks to let Mushroom Ears record system audio. Allow it.
 
-`tools/make_app.sh` installs the helper beside the app, as `~/Applications/MushroomEars.app`, and the widget prefers that copy. macOS gives a helper that sits inside another app's bundle silence instead of audio.
+`tools/make_app.sh` installs the helper beside the app, as `~/Applications/MushroomEars.app`. The widget looks beside its own app first, then in `~/Applications`, then in `/Applications`. macOS gives a helper that sits inside another app's bundle silence instead of audio.
 
 **If the cake stops reacting after a rebuild:** rebuilding the helper changes its signature and macOS silently stops feeding it audio. Clear the stale permission, then start the widget and allow the prompt again:
 

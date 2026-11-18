@@ -247,9 +247,12 @@ func _ready():
 		# Default: hear the Mac's own audio through the Mushroom Ears helper app.
 		_udp.bind(LEVELS_PORT, "127.0.0.1")
 		_udp.set_dest_address("127.0.0.1", PING_PORT)
-		# Prefer the copy installed in ~/Applications: macOS gives a helper nested inside
-		# another app bundle silence instead of system audio.
-		var ears := OS.get_environment("HOME").path_join("Applications/MushroomEars.app")
+		# The helper has to sit beside this app. Nested inside the bundle, macOS feeds it silence.
+		var ears := _ears_beside_app()
+		if ears == "":
+			ears = OS.get_environment("HOME").path_join("Applications/MushroomEars.app")
+		if not DirAccess.dir_exists_absolute(ears):
+			ears = "/Applications/MushroomEars.app"
 		if not DirAccess.dir_exists_absolute(ears):
 			ears = ProjectSettings.globalize_path("res://ears/MushroomEars.app")
 		OS.create_process("open", ["-g", ears])
@@ -267,6 +270,14 @@ func _ready():
 		await get_tree().create_timer(1.2).timeout
 		get_viewport().get_texture().get_image().save_png(_shot_path)
 		get_tree().quit()
+
+func _ears_beside_app() -> String:
+	# .../Name.app/Contents/MacOS/binary -> the folder that contains the .app
+	var folder := OS.get_executable_path().get_base_dir().get_base_dir().get_base_dir().get_base_dir()
+	var ears := folder.path_join("MushroomEars.app")
+	if DirAccess.dir_exists_absolute(ears):
+		return ears
+	return ""
 
 
 # ---------------------------------------------------------------- 3D scene
