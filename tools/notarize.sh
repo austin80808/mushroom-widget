@@ -13,7 +13,9 @@ if [ -z "$ident" ]; then
   security find-identity -v -p codesigning >&2 || true
   exit 1
 fi
-codesign --force --options runtime --timestamp --sign "$ident" "$cake/Contents/MacOS/cake-runtime"
+# Hardened runtime kills this Godot binary unless it keeps the engine entitlements.
+codesign --force --options runtime --timestamp --entitlements tools/godot-runtime.entitlements --sign "$ident" "$cake/Contents/MacOS/cake-runtime"
+codesign --force --options runtime --timestamp --sign "$ident" "$cake/Contents/MacOS/Mushroom Widget"
 codesign --force --options runtime --timestamp --sign "$ident" "$cake"
 codesign --force --options runtime --timestamp --sign "$ident" "$ears"
 ditto -c -k --keepParent "$cake" build/cake.zip
